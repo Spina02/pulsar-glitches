@@ -1,0 +1,97 @@
+import numpy as np
+from model import Model
+
+class BrownianGlitchModel(Model):
+    """
+    This class implements an accumulative stochastic model with drift and diffusion,
+    threshold Xc and random reset (glitch).
+    """
+
+    def __init__(self,
+                Xc: float = 1.0,
+                xi: float = 0.025,
+                sigma: float = 0.15,
+                dist_type: str = None,
+                dist_params: dict = None,
+                seed: int = None) -> None:
+        """
+        Args:
+            xi (float): drift coefficient.
+            sigma (float): diffusion coefficient.
+            Xc (float): threshold.
+            dist_type (str): distribution type.
+            dist_params (dict): distribution parameters.
+            seed (int, optional): random number generator seed.
+        """
+        super().__init__(Xc, dist_type, dist_params, seed)
+        
+        # Check that the parameters are positive
+        if xi <= 0:
+            raise ValueError("Drift coefficient xi must be positive.")
+        if sigma <= 0:
+            raise ValueError("Diffusion coefficient sigma must be positive.")
+
+        # Store the parameters
+        self.xi = xi
+        self.sigma = sigma
+
+    def simulate(self, x0: float, T: float, N: int) -> np.ndarray:
+        '''
+        Given the initial population value x0, the considered interval lenght T
+        and the number of step in the computation N, this method will return a
+        trajectory for the PLS.
+        '''
+        #Check the inputs
+        self._Model__checkInputs(x0,T,N)
+        
+        #Setup step lenght and traj array
+        h = T/N
+        sqrt_h = np.sqrt(h)
+        traj = np.zeros(N+1,dtype=float)
+        times = np.zeros(N+1,dtype=float)
+        
+        # local copy of the parameters to optimize the simulation
+        xi = self.xi
+        sigma = self.sigma
+        
+        traj[0] = x0
+        times[0] = 0.0
+        
+        # define storing variables
+        glitch_times, waits, sizes = [0], [], []
+    
+        for i in range(1,N+1):
+            times[i] = i*h
+                
+            # deterministic step
+            dx = xi*h
+            
+            # stochastic step
+            dx += sigma * sqrt_h * self.rng.normal()
+            
+            # Update the stress level
+            x = traj[i-1] + dx
+            
+            # Reset the total glitch size
+            total_glitch_size = 0
+            
+            # after a glitch, the stress could still be above the threshold -> while loop
+            while x - total_glitch_size >= self.Xc:
+                total_glitch_size += max(self._sample_glitch(),0) # avoid negative glitches
+                
+            traj[i] = max(x - total_glitch_size, 0) # reset step
+
+            # If there was a glitch, store the time and size
+            if total_glitch_size > 0:
+                sizes.append(total_glitch_size)
+                waits.append(times[i] - glitch_times[-1])
+                glitch_times.append(times[i])
+
+        # Return the results
+        return {
+                "times": times,
+                "traj": traj,
+                "glitch_times": np.array(glitch_times[1:]),
+                "waiting_times": np.array(waits),
+                "glitch_sizes":  np.array(sizes)
+            }
