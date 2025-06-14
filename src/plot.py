@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 from brownian_model import BrownianGlitchModel
 from simulation import simulation_parallel
 
-def plot_single_trajectory(mu, xi, Xc, dist_type, dist_params, x0, T, N):
+def plot_single_trajectory(mu, xi, Xc, dist_type, dist_params, x0, T, N, seed = None):
     # Create the system
-    system = BrownianGlitchModel(xi=xi, sigma=np.sqrt(xi/mu), Xc=Xc, dist_type=dist_type, dist_params=dist_params)
+    system = BrownianGlitchModel(xi=xi, sigma=np.sqrt(xi/mu), Xc=Xc, dist_type=dist_type, dist_params=dist_params, seed=seed)
     # Run the simulation
     result = system.simulate(x0, T, N)
     
@@ -34,7 +34,8 @@ def plot_brownian_glitch_panels(mu_list,
                                 T=50, 
                                 N=50_000,
                                 figsize=(8,6),
-                                title = "process trajectory"):
+                                title = "process trajectory",
+                                seed = None):
     """
     Plots a 2x2 panel of BrownianGlitchModel simulations for different xi/sigma^2 values,
     including glitch occurrences as vertical segments at the bottom of each plot.
@@ -66,7 +67,7 @@ def plot_brownian_glitch_panels(mu_list,
             sigma = np.sqrt(xi / mu)
         
         # Create the system
-        system = BrownianGlitchModel(Xc=Xc, xi=xi, sigma=sigma, dist_type=dist_type, dist_params=dist_params)
+        system = BrownianGlitchModel(Xc=Xc, xi=xi, sigma=sigma, dist_type=dist_type, dist_params=dist_params, seed=seed)
         # Run the simulation
         result = system.simulate(x0, T, N)
         
@@ -103,7 +104,8 @@ def plot_waiting_time_histogram(mu_list,
                           x0=0.5, 
                           T=500, 
                           N=500_000,
-                          Nsim=100):
+                          Nsim=100,
+                          seed = None):
     """
     Plots histograms of the waiting times between glitches in a 2x2 subplot layout,
     accumulating results from multiple simulations.
@@ -118,7 +120,7 @@ def plot_waiting_time_histogram(mu_list,
         # Collect waiting times from multiple simulations
         all_waiting_times = []
         for _ in range(Nsim):
-            system = BrownianGlitchModel(Xc=Xc, xi=xi, sigma=sigma, dist_type=dist_type, dist_params=dist_params)
+            system = BrownianGlitchModel(Xc=Xc, xi=xi, sigma=sigma, dist_type=dist_type, dist_params=dist_params, seed=seed)
             simulation_params = {'x0': x0, 'T': T, 'N': N}
             result = system.simulate(**simulation_params)
             all_waiting_times.extend(result['waiting_times'])
@@ -137,12 +139,13 @@ def plot_waiting_time_histogram(mu_list,
     
 def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
                                   colormap=['tab:red', 'tab:orange', 'tab:green', 'tab:blue'],
-                                  bins_lin=np.linspace(0.0, 5.0, 50),
-                                  bins_log=np.logspace(-2, 2, 50),
+                                  bins_lin=np.linspace(0.0, 5.0, 40),
+                                  bins_log=np.logspace(-2, 2, 40),
                                   sigma=0.15,
                                   system_params=None,
                                   sim_params=None,
-                                  N_glitches = 100_000
+                                  N_glitches = 100_000,
+                                  seed = None
                                   ):
     """
     Plots waiting time distributions for different mu values in both linear and log scales.
@@ -221,4 +224,86 @@ def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
     ax[1].set_title('log-log')
 
     plt.tight_layout()
+    plt.show()
+    
+# Aggiungere in fondo a plot.py
+
+from sdp_model import SDPModel # Aggiungi questa importazione in cima al file
+
+def plot_sdp_vs_brownian(T=2.5, N=5000, seed=None):
+    """
+    Recreates the logic of Figure 2 from the "Long-term statistics..." paper,
+    comparing a trajectory from the SDP model with one from the Brownian model.
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(10, 5), sharex='col', gridspec_kw={'height_ratios': [1, 0.6]})
+    
+    # Common parameters for both models
+    common_params = {
+        'Xc': 1.0,
+        'dist_type': 'neg_powerlaw', 
+        'dist_params': {'delta': 1.5, 'beta': 1e-2}
+    }
+    
+    # --- Left Panels: SDP Model ---
+    sdp_params = {
+        'alpha': 1.0, 
+        'f': 1.0,
+        **common_params
+    }
+    sdp_model = SDPModel(**sdp_params, seed=seed)
+    sdp_result = sdp_model.simulate(x0=0.1, T=T)
+    
+    # --- Right Panels: Brownian Model ---
+    mu = 50.0
+    sigma = 0.2
+    brownian_params = {
+        'sigma': sigma,
+        'xi': sigma**2 * mu,
+        **common_params
+    }
+    brownian_model = BrownianGlitchModel(**brownian_params, seed=seed)
+    brownian_result = brownian_model.simulate(x0=0.1, T=T, N=N)
+    
+    # Model results for plotting
+    models_data = [
+        ('SDP Model', sdp_result, 0),
+        ('Brownian Model', brownian_result, 1)
+    ]
+    
+    # Visualization parameters
+    v_dot = 0.1  # Arbitrary spin-down rate for visualization
+    time_continuous = np.linspace(0, T, 1000)
+    baseline_velocity = -v_dot * time_continuous + 0.5
+    
+    for title, result, col_idx in models_data:
+        ax_stress = axes[0, col_idx]
+        ax_vel = axes[1, col_idx]
+        
+        # Top panel: Stress Trajectory
+        ax_stress.plot(result['times'], result['traj'], lw=1, color='blue')
+        ax_stress.axhline(1.0, color='red', linestyle='--', lw=1, alpha=0.7)
+        ax_stress.set_ylim(0, 1.1)
+        ax_stress.set_xlim(0, T)
+        ax_stress.set_title(title, fontsize=12, pad=10)
+        
+        # Add glitch markers
+        for t in result['glitch_times']:
+            ax_stress.axvline(t, ymin=0, ymax=0.05, color='k', lw=1)
+        
+        # Add cumulative glitch effects
+        total_velocity = baseline_velocity.copy()
+        for t_glitch, glitch_size in zip(result['glitch_times'], result['glitch_sizes']):
+            mask = time_continuous >= t_glitch
+            total_velocity[mask] += glitch_size * 2e-2
+        ax_vel.plot(time_continuous, total_velocity, color='darkorange', lw=2)
+
+        ax_vel.set_xlabel('Time, t (arb. units)')
+        ax_vel.set_xlim(0, T)
+        ax_vel.set_ylim(0.2, 0.6)
+    
+    # Set labels for left column only
+    axes[0, 0].set_ylabel('Stress, X')
+    axes[1, 0].set_ylabel('Angular velocity\n(arb. units)')
+
+    fig.tight_layout()
     plt.show()

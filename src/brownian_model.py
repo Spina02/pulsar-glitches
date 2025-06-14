@@ -16,14 +16,14 @@ class BrownianGlitchModel(Model):
                 seed: int = None) -> None:
         """
         Args:
+            Xc (float): threshold.
             xi (float): drift coefficient.
             sigma (float): diffusion coefficient.
-            Xc (float): threshold.
             dist_type (str): distribution type.
             dist_params (dict): distribution parameters.
             seed (int, optional): random number generator seed.
         """
-        super().__init__(Xc, dist_type, dist_params, seed)
+        super().__init__(Xc=Xc, dist_type=dist_type, dist_params=dist_params, seed=seed)
         
         # Check that the parameters are positive
         if xi <= 0:
@@ -35,7 +35,7 @@ class BrownianGlitchModel(Model):
         self.xi = xi
         self.sigma = sigma
 
-    def simulate(self, x0: float, T: float, N: int) -> np.ndarray:
+    def simulate(self, x0: float, T: float, N: int) -> dict:
         '''
         Given the initial population value x0, the considered interval lenght T
         and the number of step in the computation N, this method will return a
@@ -58,7 +58,7 @@ class BrownianGlitchModel(Model):
         times[0] = 0.0
         
         # define storing variables
-        glitch_times, waits, sizes = [0], [], []
+        glitch_times, waiting_times, glitch_sizes = [0], [], []
     
         for i in range(1,N+1):
             times[i] = i*h
@@ -83,8 +83,8 @@ class BrownianGlitchModel(Model):
 
             # If there was a glitch, store the time and size
             if total_glitch_size > 0:
-                sizes.append(total_glitch_size)
-                waits.append(times[i] - glitch_times[-1])
+                glitch_sizes.append(total_glitch_size)
+                waiting_times.append(times[i] - glitch_times[-1])
                 glitch_times.append(times[i])
 
         # Return the results
@@ -92,6 +92,6 @@ class BrownianGlitchModel(Model):
                 "times": times,
                 "traj": traj,
                 "glitch_times": np.array(glitch_times[1:]),
-                "waiting_times": np.array(waits),
-                "glitch_sizes":  np.array(sizes)
+                "waiting_times": np.array(waiting_times),
+                "glitch_sizes":  np.array(glitch_sizes)
             }
