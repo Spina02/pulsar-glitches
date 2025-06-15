@@ -1,7 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from brownian_model import BrownianGlitchModel
-from simulation import simulation_parallel
+from simulation import simulation_parallel, run_single_simulation
+from sdp_model import SDPModel
+import multiprocessing as mp
 
 def plot_single_trajectory(mu, xi, Xc, dist_type, dist_params, x0, T, N, seed = None):
     # Create the system
@@ -136,7 +138,6 @@ def plot_waiting_time_histogram(mu_list,
     plt.tight_layout()
     plt.show()
     
-    
 def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
                                   colormap=['tab:red', 'tab:orange', 'tab:green', 'tab:blue'],
                                   bins_lin=np.linspace(0.0, 5.0, 40),
@@ -144,55 +145,87 @@ def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
                                   sigma=0.15,
                                   system_params=None,
                                   sim_params=None,
-                                  N_glitches = 100_000,
-                                  seed = None
+                                  N_glitches=100_000,
+                                  seed=None
                                   ):
     """
     Plots waiting time distributions for different mu values in both linear and log scales.
     
     Parameters:
     -----------
-    mu_vals : list
-        List of mu values to plot
-    colormap : list
-        List of colors for each mu value
-    bins_lin : array
-        Linear bins for left panel
-    bins_log : array
-        Logarithmic bins for right panel
-    sigma : float
-        Diffusion coefficient
-    system_params : dict
-        Additional system parameters (optional)
-    sim_params : dict
-        Additional simulation parameters (optional)
+    (docstring invariata)
     """
     fig, ax = plt.subplots(1, 2, figsize=(9, 4))
+    
+    base_rng = np.random.default_rng(seed)
+
+    base_system_params = {
+        'sigma': sigma,
+        'Xc': system_params.get('Xc', 1.0) if system_params else 1.0,
+        'dist_type': system_params.get('dist_type', 'neg_powerlaw') if system_params else 'neg_powerlaw',
+        'dist_params': system_params.get('dist_params', {'delta': 1.5, 'beta': 1e-2}) if system_params else {'delta': 1.5, 'beta': 1e-2},
+    }
+
+    base_sim_params = {
+        'x0': sim_params.get('x0', 0.5) if sim_params else 0.5,
+        'Tsim': sim_params.get('Tsim', 500) if sim_params else 500,
+        'Nsteps': sim_params.get('Nsteps', 500_000) if sim_params else 500_000,
+    }
+
 
     for mu, c in zip(mu_vals, colormap):
-        # Collect at least 20k events
+        print(f"Starting analysis for mu = {mu}...")
+        
+        # Crea copie e modifica solo ciò che serve
+        current_system_params = base_system_params.copy()
+        current_system_params['xi'] = sigma**2 * mu
+        
+        current_sim_params = base_sim_params.copy()
+        if mu >= 10.0: current_sim_params['Nsteps'] = 5_000_000
+        if mu >= 50.0: current_sim_params['Nsteps'] = 10_000_000
+
         dt_list = []
-        while sum(len(x) for x in dt_list) < N_glitches:
-            xi = sigma**2 * mu
-            if system_params is None:
-                system_params = {}
+        collected_glitches = 0
+        
+        # max_sims is needed to avoid potentially infinite loops
+        max_sims = 10_000 
+        seeds = base_rng.integers(low=0, high=2**31, size=max_sims)
+        
+        # Generator for simulation arguments
+        def arg_generator():
+            for s in seeds:
+                yield (
+                    current_system_params['xi'],
+                    current_system_params['sigma'],
+                    current_system_params['Xc'],
+                    current_system_params['dist_type'],
+                    current_system_params['dist_params'],
+                    s,
+                    current_sim_params['x0'],
+                    current_sim_params['Tsim'],
+                    current_sim_params['Nsteps'],
+                    True # only_waits
+                )
+
+        num_processes = max(1, mp.cpu_count() - 1)
+        with mp.Pool(processes=num_processes) as pool:
+            # imap_unordered returns results in the order they finish, which is more efficient
+            results_iterator = pool.imap_unordered(run_single_simulation, arg_generator())
             
-            system_params = {
-                'xi': xi, 
-                'sigma': sigma, 
-                'Xc': system_params.get('Xc', 1.0),
-                'dist_type': system_params.get('dist_type', 'neg_powerlaw'),
-                'dist_params': system_params.get('dist_params', {'delta': 1.5, 'beta': 1e-2})
-            }
-            if sim_params is None:
-                sim_params = {'x0': 0.5, 'Tsim': 500,
-                            'Nsteps': 500_000, 'Nsim': 500}
-            
-            results = simulation_parallel(system_params, **sim_params)
-            for res in results:
-                if res is not None:
-                    dt_list.append(res['waiting_times'])
-                    
+            for i, waiting_times in enumerate(results_iterator):
+                if waiting_times is not None and len(waiting_times) > 0:
+                    dt_list.append(waiting_times)
+                    collected_glitches += len(waiting_times)
+                
+                # Print progress
+                print(f"\r[mu={mu}] Collected {collected_glitches}/{N_glitches} glitches from {i+1} simulations...", end="")
+
+                # Exit condition
+                if collected_glitches >= N_glitches:
+                    pool.terminate() # Stop the pool if we have enough glitches
+                    break
+        print("\nDone.")
+
         delta_t_tot = np.concatenate(dt_list)[:N_glitches]
         delta_t_norm = delta_t_tot / delta_t_tot.mean()
 
@@ -206,7 +239,6 @@ def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
         centers_log = np.sqrt(edges[:-1] * edges[1:])  # geometric center
         ax[1].plot(centers_log, pdf_log, lw=1.4, color=c)
 
-    # Left panel formatting
     ax[0].set_yscale('log')
     ax[0].set_xlabel(r'$\Delta t / \langle \Delta t \rangle$')
     ax[0].set_ylabel(r'$p(\Delta t)$')
@@ -215,7 +247,6 @@ def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
     ax[0].set_ylim(1e-2, 1e1)
     ax[0].set_title('log-linear')
 
-    # Right panel formatting
     ax[1].set_xscale('log')
     ax[1].set_yscale('log')
     ax[1].set_xlabel(r'$\Delta t / \langle \Delta t \rangle$')
@@ -225,10 +256,6 @@ def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
 
     plt.tight_layout()
     plt.show()
-    
-# Aggiungere in fondo a plot.py
-
-from sdp_model import SDPModel # Aggiungi questa importazione in cima al file
 
 def plot_sdp_vs_brownian(T=2.5, N=5000, seed=None):
     """

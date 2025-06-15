@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.random import Generator, PCG64
+from scipy import stats
 
 class Model:
     def __init__(self,
@@ -103,25 +104,53 @@ class Model:
             sample = (u * (x_max_pow - x_min_pow) + x_min_pow)**(1.0 / one_minus_delta)
             return sample
         
-    def _gaussian_sample(self, mean, std, y = 1) -> float:
-        y_norm = y/self.Xc
-        while True:
-            sample = self.rng.normal(mean, std)
-            if 0 <= sample <= y_norm:
-                return sample
+    def _gaussian_sample(self, mean, std, y=1.0) -> float:
+        """
+        Samples from a Gaussian distribution truncated to the normalized interval [0, y_norm].
+        This implementation uses inverse transform sampling for efficiency, avoiding rejection loops.
+        """
+        y_norm = y / self.Xc
+        
+        # If y_norm is less than or equal to 0, return 0.0
+        if y_norm <= 0:
+            return 0.0
+
+        # 'a' and 'b' are the lower and upper bounds for the truncation
+        # Lower bound: 0 (normalized stress cannot be negative)
+        a = (0 - mean) / std
+        # Upper bound: y_norm (normalized stress cannot exceed y_norm)
+        b = (y_norm - mean) / std
+        
+        # stats.truncnorm.rvs generates random variates from a truncated normal distribution.
+        return stats.truncnorm.rvs(a=a, b=b, loc=mean, scale=std, random_state=self.rng)
             
-    def _lognormal_sample(self, mean: float, std: float, y = 1) -> float:
+    def _lognormal_sample(self, mu: float, sigma: float, y=1.0) -> float:
         """
-        Samples from a Lognormal distribution with parameters mean, std for log(X),
-        truncated to the normalized interval [0, 1].
-        Returns a normalized sample (0, 1].
+        Samples from a Lognormal distribution truncated to the normalized interval (0, y_norm].
+        This is done by sampling from a truncated Normal distribution for log(X) and then
+        exponentiating the result. This is efficient and avoids rejection loops.
         """
-        y_norm = y/self.Xc
-        while True:
-            x = self.rng.normal(mean, std)
-            sample_norm = np.exp(x)
-            if sample_norm <= y_norm: # > 0 is implicit in exp
-                return sample_norm
+        y_norm = y / self.Xc
+
+        # If y_norm is less than or equal to 0, return 0.0
+        if y_norm <= 0:
+            return 0.0
+        
+        # If X is Lognormal(mu, sigma), then log(X) is Normal(mu, sigma).
+        # We need to sample log(X) such that log(X) <= log(y_norm).
+        # So we need to sample from a Normal distribution with mean mu and std sigma,
+        log_y_norm = np.log(y_norm)
+        
+        # The upper bound for the truncation is log(y_norm).
+        # 'a' is -inf by default, meaning no lower bound.
+        b = (log_y_norm - mu) / sigma
+        
+        # Sample from a truncated normal distribution.
+        # stats.truncnorm.rvs generates random variates from a truncated normal distribution.
+        log_sample = stats.truncnorm.rvs(a=-np.inf, b=b, loc=mu, scale=sigma, random_state=self.rng)
+        
+        # Return the exponentiated sample to get the lognormal sample.
+        return np.exp(log_sample)
     
     def _sample_glitch(self, y: float = 1) -> float:
         """

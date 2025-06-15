@@ -4,6 +4,9 @@ template/
 #pycache
 __pycache__/
 
+# vscode
+.vscode/
+
 ## Core latex/pdflatex auxiliary files:
 *.aux
 *.lof

@@ -8,21 +8,19 @@ def run_single_simulation(args):
     Designed to be used with multiprocessing.Pool.map.
     """
     
-    xi, sigma, Xc, dist_type, dist_params, seed, x0, T_sim, N_steps = args
+    xi, sigma, Xc, dist_type, dist_params, seed, x0, T_sim, N_steps, only_waits = args
     
     try:
         # Create a system instance for each process
-        system = BrownianGlitchModel(Xc=Xc, xi=xi, sigma=sigma, dist_type=dist_type, dist_params=dist_params, seed=seed)
+        system = BrownianGlitchModel(Xc=Xc, xi=xi, sigma=sigma, dist_type=dist_type, dist_params=dist_params, seed=seed, only_waits=only_waits)
         # Run the simulation
-        result = system.simulate(x0, T_sim, N_steps)
-        # Return the result
-        return result
+        return system.simulate(x0, T_sim, N_steps)
     
     except Exception as e:
         print(f"Error in worker process (seed {seed}): {e}")
         return None
 
-def simulation_parallel(system_params, x0, Nsim, Tsim=50, Nsteps=500):
+def simulation_parallel(system_params, x0, Nsim, Tsim=50, Nsteps=500, only_waits=False):
     """
     Runs multiple BrownianGlitchModel simulations in parallel to collect statistics.
     
@@ -58,7 +56,8 @@ def simulation_parallel(system_params, x0, Nsim, Tsim=50, Nsteps=500):
         seed,
         x0,
         Tsim,
-        Nsteps
+        Nsteps,
+        only_waits
     ) for seed in seeds]
 
     # Determine number of processes
