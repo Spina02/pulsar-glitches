@@ -1,11 +1,33 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from brownian_model import BrownianGlitchModel
-from simulation import simulation_parallel, run_single_simulation
-from sdp_model import SDPModel
 import multiprocessing as mp
+import os
+import pandas as pd
 
-def plot_single_trajectory(mu, xi, Xc, dist_type, dist_params, x0, T, N, seed = None):
+from brownian_model import BrownianGlitchModel
+from sdp_model import SDPModel
+from simulation import init_worker, run_single_simulation_worker, simulation_parallel
+
+# Helper function to create consistent filenames
+def _create_filename(prefix, params):
+    """Creates a standardized filename from a dictionary of parameters."""
+    # Flatten nested dictionaries like dist_params
+    flat_params = {}
+    for key, value in params.items():
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                flat_params[f"{key}_{sub_key}"] = sub_value
+        else:
+            flat_params[key] = value
+
+    # Create a string from the parameters
+    param_str = "_".join(f"{k}{v}" for k, v in sorted(flat_params.items()))
+    # Sanitize the string to be a valid filename
+    param_str = param_str.replace('.', 'p').replace('-', 'm')
+    return f"{prefix}_{param_str}.csv"
+
+
+def plot_single_trajectory(mu, xi, Xc, dist_type, dist_params, x0, T, N, seed=None):
     # Create the system
     system = BrownianGlitchModel(xi=xi, sigma=np.sqrt(xi/mu), Xc=Xc, dist_type=dist_type, dist_params=dist_params, seed=seed)
     # Run the simulation
@@ -26,40 +48,12 @@ def plot_single_trajectory(mu, xi, Xc, dist_type, dist_params, x0, T, N, seed = 
     ax.set_title(r'$\xi/\sigma^2 = %.1f$' % mu)
     plt.show()
 
-def plot_brownian_glitch_panels(mu_list,
-                                xi = None,
-                                sigma=None,
-                                Xc=1.0, 
+
+def plot_brownian_glitch_panels(mu_list, xi=None, sigma=None, Xc=1.0, 
                                 dist_type='neg_powerlaw', 
                                 dist_params={'delta': 1.5, 'beta': 0.01},
-                                x0=0.5, 
-                                T=50, 
-                                N=50_000,
-                                figsize=(8,6),
-                                title = "process trajectory",
-                                seed = None):
-    """
-    Plots a 2x2 panel of BrownianGlitchModel simulations for different xi/sigma^2 values,
-    including glitch occurrences as vertical segments at the bottom of each plot.
-
-    Parameters:
-        mu_list: list of floats
-            List of xi/sigma^2 values to use for each panel (length 4).
-        Xc: float
-            Critical value for the model.
-        dist_type: str
-            Distribution type for glitches.
-        dist_params: dict
-            Parameters for the glitch distribution.
-        x0: float
-            Initial value.
-        T: float
-            Total simulation time.
-        N: int
-            Number of time steps.
-        figsize: tuple
-            Figure size.
-    """
+                                x0=0.5, T=50, N=50_000,
+                                figsize=(8,6), title="process trajectory", seed=None):
     fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=True)
     axes = axes.flatten()
     for idx, mu in enumerate(mu_list):
@@ -97,21 +91,13 @@ def plot_brownian_glitch_panels(mu_list,
     plt.suptitle(title)
     plt.tight_layout()
     plt.show()
-    
-def plot_waiting_time_histogram(mu_list, 
-                          Xc=1.0, 
-                          sigma=0.15,
-                          dist_type='neg_powerlaw', 
-                          dist_params={'delta': 1.5, 'beta': 0.01},
-                          x0=0.5, 
-                          T=500, 
-                          N=500_000,
-                          Nsim=100,
-                          seed = None):
-    """
-    Plots histograms of the waiting times between glitches in a 2x2 subplot layout,
-    accumulating results from multiple simulations.
-    """
+
+
+def plot_waiting_time_histogram(mu_list, Xc=1.0, sigma=0.15,
+                                dist_type='neg_powerlaw', 
+                                dist_params={'delta': 1.5, 'beta': 0.01},
+                                x0=0.5, T=500, N=500_000,
+                                Nsim=100, seed=None):
     fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True, sharey=True)
     axes = axes.flatten()
     
@@ -119,13 +105,23 @@ def plot_waiting_time_histogram(mu_list,
         
         xi = sigma**2 * mu
         
+        system_params = {
+            'xi': xi, 'sigma': sigma, 'Xc': Xc,
+            'dist_type': dist_type, 'dist_params': dist_params
+        }
+        
         # Collect waiting times from multiple simulations
         all_waiting_times = []
-        for _ in range(Nsim):
-            system = BrownianGlitchModel(Xc=Xc, xi=xi, sigma=sigma, dist_type=dist_type, dist_params=dist_params, seed=seed)
-            simulation_params = {'x0': x0, 'T': T, 'N': N}
-            result = system.simulate(**simulation_params)
-            all_waiting_times.extend(result['waiting_times'])
+        
+        results = simulation_parallel(system_params, x0, Nsim, Tsim=T, Nsteps=N, only_waits=False)
+            
+        # Collect waiting times from all simulation results
+        all_waiting_times = []
+        for res in results:
+            if res and 'waiting_times' in res and len(res['waiting_times']) > 0:
+                all_waiting_times.extend(res['waiting_times'])
+        
+        all_waiting_times = np.array(all_waiting_times)
         
         ax = axes[idx]
         ax.hist(all_waiting_times, bins=100, density=True, alpha=0.5)
@@ -137,7 +133,8 @@ def plot_waiting_time_histogram(mu_list,
     
     plt.tight_layout()
     plt.show()
-    
+
+
 def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
                                   colormap=['tab:red', 'tab:orange', 'tab:green', 'tab:blue'],
                                   bins_lin=np.linspace(0.0, 5.0, 40),
@@ -146,15 +143,18 @@ def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
                                   system_params=None,
                                   sim_params=None,
                                   N_glitches=100_000,
-                                  seed=None
+                                  seed=None,
+                                  store_results=False,
+                                  save_fig=True,
+                                  results_dir="results"
                                   ):
     """
-    Plots waiting time distributions for different mu values in both linear and log scales.
-    
-    Parameters:
-    -----------
-    (docstring invariata)
+    Plots waiting time distributions, with options to save/load results and figures.
     """
+    # Create the results directory if it doesn't exist
+    if store_results or save_fig:
+        os.makedirs(results_dir, exist_ok=True)
+        
     fig, ax = plt.subplots(1, 2, figsize=(9, 4))
     
     base_rng = np.random.default_rng(seed)
@@ -171,74 +171,77 @@ def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
         'Tsim': sim_params.get('Tsim', 500) if sim_params else 500,
         'Nsteps': sim_params.get('Nsteps', 500_000) if sim_params else 500_000,
     }
-
-
+    
+    all_mu_params_for_filename = {}
+    
     for mu, c in zip(mu_vals, colormap):
-        print(f"Starting analysis for mu = {mu}...")
         
-        # Crea copie e modifica solo ciò che serve
         current_system_params = base_system_params.copy()
         current_system_params['xi'] = sigma**2 * mu
         
         current_sim_params = base_sim_params.copy()
-        if mu >= 10.0: current_sim_params['Nsteps'] = 5_000_000
-        if mu >= 50.0: current_sim_params['Nsteps'] = 10_000_000
-
-        dt_list = []
-        collected_glitches = 0
+        if mu >= 10.0: current_sim_params['Nsteps'] = 10_000_000
+        if mu >= 50.0: current_sim_params['Nsteps'] = 50_000_000
         
-        # max_sims is needed to avoid potentially infinite loops
-        max_sims = 10_000 
-        seeds = base_rng.integers(low=0, high=2**31, size=max_sims)
+        # caching results
+        params_for_filename = {**current_system_params, **current_sim_params, 'N_glitches': N_glitches}
+        filename = _create_filename("waiting_times", params_for_filename)
+        filepath = os.path.join(results_dir, filename)
         
-        # Generator for simulation arguments
-        def arg_generator():
-            for s in seeds:
-                yield (
-                    current_system_params['xi'],
-                    current_system_params['sigma'],
-                    current_system_params['Xc'],
-                    current_system_params['dist_type'],
-                    current_system_params['dist_params'],
-                    s,
-                    current_sim_params['x0'],
-                    current_sim_params['Tsim'],
-                    current_sim_params['Nsteps'],
-                    True # only_waits
-                )
+        all_mu_params_for_filename[f"mu{mu}".replace('.','p')] = N_glitches # For the figure filename
 
-        num_processes = max(1, mp.cpu_count() - 1)
-        with mp.Pool(processes=num_processes) as pool:
-            # imap_unordered returns results in the order they finish, which is more efficient
-            results_iterator = pool.imap_unordered(run_single_simulation, arg_generator())
+        if os.path.exists(filepath):
+            print(f"Loading cached results for mu = {mu} from {filepath}")
+            df = pd.read_csv(filepath)
+            delta_t_tot = df['waiting_time'].values
+        else:
+            print(f"Starting analysis for mu = {mu}...")
+            dt_list = []
+            collected_glitches = 0
             
-            for i, waiting_times in enumerate(results_iterator):
-                if waiting_times is not None and len(waiting_times) > 0:
-                    dt_list.append(waiting_times)
-                    collected_glitches += len(waiting_times)
-                
-                # Print progress
-                print(f"\r[mu={mu}] Collected {collected_glitches}/{N_glitches} glitches from {i+1} simulations...", end="")
+            max_sims = N_glitches // 10 if N_glitches > 100 else 100
+            seeds = base_rng.integers(low=0, high=2**31, size=max_sims)
+            
+            def arg_generator():
+                for s in seeds:
+                    yield (current_sim_params['x0'], current_sim_params['Tsim'], current_sim_params['Nsteps'], s)
 
-                # Exit condition
-                if collected_glitches >= N_glitches:
-                    pool.terminate() # Stop the pool if we have enough glitches
-                    break
-        print("\nDone.")
+            model_init_args = {**current_system_params, 'only_waits': True}
 
-        delta_t_tot = np.concatenate(dt_list)[:N_glitches]
-        delta_t_norm = delta_t_tot / delta_t_tot.mean()
+            num_processes = max(1, mp.cpu_count() - 1)
+            with mp.Pool(processes=num_processes, initializer=init_worker, initargs=(model_init_args,)) as pool:
+                results_iterator = pool.imap_unordered(run_single_simulation_worker, arg_generator())
+                for i, waiting_times in enumerate(results_iterator):
+                    if waiting_times is not None and len(waiting_times) > 0:
+                        dt_list.append(waiting_times)
+                        collected_glitches += len(waiting_times)
+                    print(f"\r[mu={mu}] Collected {collected_glitches}/{N_glitches} glitches from {i+1} simulations...", end="")
+                    if collected_glitches >= N_glitches:
+                        pool.terminate()
+                        break
+            print("\nDone.")
+            
+            delta_t_tot = np.concatenate(dt_list)[:N_glitches]
+            
+            if store_results:
+                print(f"Storing results to {filepath}")
+                pd.DataFrame({'waiting_time': delta_t_tot}).to_csv(filepath, index=False)
+        
+        # plotting
+        if delta_t_tot.mean() > 0:
+            delta_t_norm = delta_t_tot / delta_t_tot.mean()
+        else:
+            delta_t_norm = delta_t_tot
 
-        # Left panel (log-linear)
         pdf_lin, edges = np.histogram(delta_t_norm, bins=bins_lin, density=True)
-        centers_lin = 0.5*(edges[1:] + edges[:-1])
+        centers_lin = 0.5 * (edges[1:] + edges[:-1])
         ax[0].plot(centers_lin, pdf_lin, lw=1.4, color=c, label=fr'$\mu={mu}$')
 
-        # Right panel (log-log)
         pdf_log, edges = np.histogram(delta_t_norm, bins=bins_log, density=True)
-        centers_log = np.sqrt(edges[:-1] * edges[1:])  # geometric center
+        centers_log = np.sqrt(edges[:-1] * edges[1:])
         ax[1].plot(centers_log, pdf_log, lw=1.4, color=c)
 
+    # Formatting axes
     ax[0].set_yscale('log')
     ax[0].set_xlabel(r'$\Delta t / \langle \Delta t \rangle$')
     ax[0].set_ylabel(r'$p(\Delta t)$')
@@ -255,13 +258,17 @@ def plot_waiting_time_distributions(mu_vals=[0.1, 1.0, 10.0, 50.0],
     ax[1].set_title('log-log')
 
     plt.tight_layout()
+    
+    if save_fig:
+        fig_filename_base =f"wtd_plot_{base_system_params['dist_type']}.png"
+        fig_filepath = os.path.join(results_dir, fig_filename_base)
+        print(f"Saving figure to {fig_filepath}")
+        plt.savefig(fig_filepath, dpi=300)
+    
     plt.show()
 
+
 def plot_sdp_vs_brownian(T=2.5, N=5000, seed=None):
-    """
-    Recreates the logic of Figure 2 from the "Long-term statistics..." paper,
-    comparing a trajectory from the SDP model with one from the Brownian model.
-    """
     fig, axes = plt.subplots(2, 2, figsize=(10, 5), sharex='col', gridspec_kw={'height_ratios': [1, 0.6]})
     
     # Common parameters for both models

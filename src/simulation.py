@@ -2,6 +2,35 @@ from brownian_model import BrownianGlitchModel
 import numpy as np
 import multiprocessing as mp
 
+# A global variable to hold the model instance in each worker process
+system_instance = None
+
+def init_worker(model_params):
+    """
+    Initializes a model instance once per worker process.
+    This avoids the overhead of creating a new model for every single simulation task.
+    """
+    global system_instance
+    system_instance = BrownianGlitchModel(**model_params)
+    
+def run_single_simulation_worker(sim_args):
+    """
+    Runs a single simulation using the pre-initialized model instance.
+    It only receives arguments that change per simulation (e.g., the seed).
+    """
+    global system_instance
+    x0, T_sim, N_steps, seed = sim_args
+    
+    try:
+        # It's important to re-seed the RNG for each simulation to ensure independence
+        system_instance.rng = np.random.Generator(np.random.PCG64(seed))
+        # Run the simulation
+        return system_instance.simulate(x0, T_sim, N_steps)
+    
+    except Exception as e:
+        print(f"Error in worker process (seed {seed}): {e}")
+        return None
+
 def run_single_simulation(args):
     """
     Runs a single BrownianGlitchModel simulation.

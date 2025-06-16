@@ -89,8 +89,7 @@ class BrownianGlitchModel(Model):
 
             # If there was a glitch, store the time and size
             if total_glitch_size > 0:
-                if self.only_waits:
-                    waiting_times.append(times[i] - glitch_times[-1])
+                waiting_times.append(times[i] - glitch_times[-1])
                 glitch_sizes.append(total_glitch_size)
                 glitch_times.append(times[i])
 
