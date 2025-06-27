@@ -1,17 +1,20 @@
-from brownian_model import BrownianGlitchModel
 import numpy as np
 import multiprocessing as mp
 
 # A global variable to hold the model instance in each worker process
 system_instance = None
 
-def init_worker(model_params):
+def init_worker(model_class, model_params):
     """
     Initializes a model instance once per worker process.
     This avoids the overhead of creating a new model for every single simulation task.
     """
     global system_instance
-    system_instance = BrownianGlitchModel(**model_params)
+
+    model_init_params = model_params.copy()
+    model_init_params['only_waits'] = True
+        
+    system_instance = model_class(**model_init_params)
     
 def run_single_simulation_worker(sim_args):
     """
@@ -19,12 +22,14 @@ def run_single_simulation_worker(sim_args):
     It only receives arguments that change per simulation (e.g., the seed).
     """
     global system_instance
+    
+    # Unpack arguments
     x0, T_sim, N_steps, seed = sim_args
     
     try:
         # It's important to re-seed the RNG for each simulation to ensure independence
         system_instance.rng = np.random.Generator(np.random.PCG64(seed))
-        # Run the simulation
+        
         return system_instance.simulate(x0, T_sim, N_steps)
     
     except Exception as e:
@@ -33,42 +38,40 @@ def run_single_simulation_worker(sim_args):
 
 def run_single_simulation(args):
     """
-    Runs a single BrownianGlitchModel simulation.
+    Runs a single model simulation.
     Designed to be used with multiprocessing.Pool.map.
     """
-    
-    xi, sigma, Xc, dist_type, dist_params, seed, x0, T_sim, N_steps, only_waits = args
+    model_class, model_params, x0, T_sim, N_steps, seed = args
     
     try:
         # Create a system instance for each process
-        system = BrownianGlitchModel(Xc=Xc, xi=xi, sigma=sigma, dist_type=dist_type, dist_params=dist_params, seed=seed, only_waits=only_waits)
-        # Run the simulation
+        model_params_with_seed = {**model_params, 'seed': seed}
+        system = model_class(**model_params_with_seed)
+        
         return system.simulate(x0, T_sim, N_steps)
     
     except Exception as e:
         print(f"Error in worker process (seed {seed}): {e}")
         return None
 
-def simulation_parallel(system_params, x0, Nsim, Tsim=50, Nsteps=500, only_waits=False):
+def simulation_parallel(model_class, model_params, x0, Nsim, Tsim=50, Nsteps=None):
     """
-    Runs multiple BrownianGlitchModel simulations in parallel to collect statistics.
+    Runs multiple model simulations in parallel to collect statistics.
     
     Parameters:
     -----------
-    system_params : dict
-        Dictionary containing model parameters (xi, sigma, Xc, dist_type, dist_params)
+    model_class : class
+        The model class to use (e.g., BrownianGlitchModel, SDPModel, HybridModel)
+    model_params : dict
+        Dictionary containing model parameters
     x0 : float
         Initial stress value
-    omega : tuple
-        Range of stress values to bin (min, max)
-    Nbins : int
-        Number of bins for histogram
     Nsim : int
         Number of simulations to run
-    T_sim : float
+    Tsim : float
         Simulation time length
-    Nsteps : int
-        Number of time steps
+    Nsteps : int, optional
+        Number of time steps (required for some models)
     """
 
     # Prepare arguments for each simulation run
@@ -77,16 +80,12 @@ def simulation_parallel(system_params, x0, Nsim, Tsim=50, Nsteps=500, only_waits
 
     # Create list of argument tuples for run_single_simulation
     simulation_args = [(
-        system_params['xi'],
-        system_params['sigma'],
-        system_params['Xc'],
-        system_params['dist_type'],
-        system_params['dist_params'],
-        seed,
+        model_class,
+        model_params,
         x0,
         Tsim,
         Nsteps,
-        only_waits
+        seed
     ) for seed in seeds]
 
     # Determine number of processes

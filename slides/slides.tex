@@ -1,0 +1,40 @@
+\documentclass[11pt]{beamer}
+\usepackage{settings}
+
+\title[Pulsar Glitches]{Pulsar Glitches:\\ Insights from Brownian Motion,\\ State-Dependent Poisson Processes,\\ and Hybrid Model}
+\subtitle{A Comparative Study of Glitch Mechanisms}
+\date{}
+\author{Andrea Spinelli}
+\institute{University of Trieste}
+\titlegraphic{\hfill\includegraphics[height=1.5cm]{assets/logo100_orizzontale.pdf}}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Table of contents}
+  \setbeamertemplate{section in toc}[sections numbered]
+  \tableofcontents%[hideallsubsections]
+\end{frame}
+\input{chapters/ch1}
+\input{chapters/ch2}
+\input{chapters/ch3}
+\input{chapters/ch4}
+\input{chapters/ch5}
+
+% ------------------------------- Bibliography? ------------------------------ %
+\begin{frame}[allowframebreaks]{References}
+
+  \bibliography{references}
+  \bibliographystyle{abbrv}
+  
+\end{frame}
+
+% --------------------------------- Question --------------------------------- %
+{\setbeamercolor{palette primary}{fg=white, bg=bluscuro}
+\begin{frame}[standout]
+  \fontsize{18pt}{16pt}\selectfont
+  Thank You!
+\end{frame}
+}
+\end{document}

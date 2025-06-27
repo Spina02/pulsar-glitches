@@ -51,8 +51,8 @@ class Model:
         """
         Check that the inputs are correct.
         """
-        if x0 <= 0:
-            raise ValueError("Initial value x0 must be positive.")
+        if x0 < 0 or x0 >= self.Xc:
+            raise ValueError(f"Initial value x0 must be in [0, {self.Xc}).")
         if T <= 0:
             raise ValueError("Time T must be positive.")
         if N <= 0:

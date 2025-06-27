@@ -1,5 +1,4 @@
 import numpy as np
-from numpy.random import Generator, PCG64
 from model import Model
 
 class SDPModel(Model):
@@ -14,6 +13,7 @@ class SDPModel(Model):
                 Xc: float = 1.0,
                 dist_type: str = None,
                 dist_params: dict = None,
+                only_waits: bool = False,
                 seed: int = None) -> None:
         """
         Args:
@@ -32,18 +32,12 @@ class SDPModel(Model):
         if f <= 0:
             raise ValueError("Loading rate f must be positive.")
         
+        self.only_waits = only_waits
+        
         # Store the parameters
         self.alpha = alpha
         self.f = f
-        
-    # def get_lambda(self, x0: float) -> float:
-    #     """
-    #     This method will compute the lambda parameter for the SDP model.
-    #     """
-    #     if self.Xc - x0 <= 1e-9:
-    #         return np.inf
-    #     return self.alpha / (self.Xc-x0)
-    
+
     def _sample_waiting_time(self, x0: float) -> float:
         """
         This method will sample the waiting time for the SDP model.
@@ -58,12 +52,18 @@ class SDPModel(Model):
         # From Eq. 14 of Fulgenzi et al. (2017)
         return (self.Xc - x0) / self.f * (1 - u**(self.f / self.alpha))
     
-    def simulate(self, x0: float, T: float) -> dict:
+    def simulate(self, x0: float, T: float, N: int = None) -> dict:
         '''
         Given the initial population value x0, the considered interval lenght T
         and the number of step in the computation N, this method will return a
         trajectory for the PLS.
         '''
+        
+        # N not used, but it's here for compatibility with the other models
+        
+        #Check the inputs
+        self._Model__checkInputs(x0,T,1)
+        
         #Check the inputs
         if x0 < 0 or x0 >= self.Xc:
             raise ValueError(f"Initial value x0 must be in [0, {self.Xc}).")
@@ -94,10 +94,11 @@ class SDPModel(Model):
             x_pre_glitch = min(current_stress + self.f * dt, self.Xc)
             
             # 3. Sample the glitch size, conditional on the pre-glitch stress
+            # this ensures that the final stress is always below the threshold
             glitch_size = self._sample_glitch(y=x_pre_glitch)
             
             # 4. Update the current stress
-            x_post_glitch = max(x_pre_glitch - glitch_size, 0)
+            x_post_glitch = max(x_pre_glitch - glitch_size, 0) # no negative glitches
             
             # Store trajectory points to show the sawtooth pattern
             times.append(t_glitch)
@@ -114,6 +115,8 @@ class SDPModel(Model):
             current_time = t_glitch
             current_stress = x_post_glitch
         
+        if self.only_waits:
+            return np.array(waiting_times)
         return {
                 "times": np.array(times),
                 "traj": np.array(traj),
